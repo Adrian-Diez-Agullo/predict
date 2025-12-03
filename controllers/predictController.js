@@ -1,6 +1,9 @@
 // controllers/predictController.js
 const { getModelInfo, predict } = require("../services/tfModelService");
 
+// IMPORTAR MODELO MONGOOSE
+const Prediction = require("../models/prediccion"); 
+
 function health(req, res) {
   res.json({
     status: "ok",
@@ -30,27 +33,21 @@ async function doPredict(req, res) {
 
   try {
     const info = getModelInfo();
+    
     if (!info.ready) {
-      return res.status(503).json({
-        error: "Model not ready",
-        ready: false
-      });
+      return res.status(503).json({ error: "Model not ready", ready: false });
     }
 
     const { features, meta } = req.body;
 
-    if (!features) {
-      return res.status(400).json({ error: "Missing features" });
-    }
-    if (!meta || typeof meta !== "object") {
-      return res.status(400).json({ error: "Missing meta object" });
-    }
+  
+    if (!features) return res.status(400).json({ error: "Missing features" });
+    if (!meta || typeof meta !== "object") return res.status(400).json({ error: "Missing meta object" });
 
-    const { featureCount } = meta;
-
-    if (featureCount !== info.inputDim) {
+ 
+    if (meta.featureCount && meta.featureCount !== info.inputDim) {
       return res.status(400).json({
-        error: `featureCount must be ${info.inputDim}, received ${featureCount}`
+        error: `featureCount must be ${info.inputDim}, received ${meta.featureCount}`
       });
     }
 
@@ -60,20 +57,36 @@ async function doPredict(req, res) {
       });
     }
 
-    const prediction = await predict(features);
+   
+    const predictionValue = await predict(features);
     const latencyMs = Date.now() - start;
-    const timestamp = new Date().toISOString();
+    
+   
+    const newPrediction = new Prediction({
+        prediction: predictionValue,
+        features: features,
+        dataId: meta.dataId || null,
+        latencyMs: latencyMs,
+        timestamp: new Date()
+    });
 
-    // De momento sin MongoDB → predictionId null
+    
+    const savedPrediction = await newPrediction.save();
+
+    console.log(`[PREDICT] Guardado en Mongo con ID: ${savedPrediction._id}`);
+
+
     res.status(201).json({
-      predictionId: null,
-      prediction,
-      timestamp,
+      predictionId: savedPrediction._id, 
+      prediction: predictionValue,
+      timestamp: savedPrediction.timestamp,
       latencyMs
     });
+    
+
   } catch (err) {
     console.error("Error en /predict:", err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error: " + err.message });
   }
 }
 
